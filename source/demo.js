@@ -39,7 +39,8 @@
    const bytes=await doc.save(),file=new File([bytes],filename,{type:'application/pdf',lastModified:0}),sourcePath='Example drawings/'+folder+'/'+filename,source={id:NavigatorCore.sourceId(file,sourcePath),file,path:sourcePath};
    sources.push(source);rows.push({id:'r'+(++n),label:String(n),filename,folder,period,type,description,status,groupId,override:null});
   }
-  return {project:{format:'offline-pdf-navigator',version:1,example:true,map,groups,rows,settings:{title:'Example drawing archive',subtitle:'Map navigator - fictional demonstration project',pageSize:'tabloid',mode:'combined',navigation:true}},sources};
+  groups.forEach((g,i)=>{g.code=String(i+1);g.hotspots=i<3?[{id:'example-button-'+i,x:g.x-.12,y:g.y-.03,w:.24,h:.07}]:[];g.x=g.y=null;});
+  return {project:{format:'offline-pdf-navigator',version:2,example:true,map,groups,rows,settings:{title:'Example drawing archive',subtitle:'Map navigator - fictional demonstration project',pageSize:'tabloid',mode:'linked'}},sources};
  }
  root.NavigatorDemo={create};
 })(globalThis);

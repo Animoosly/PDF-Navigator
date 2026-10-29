@@ -1,16 +1,16 @@
-/* Self-contained, linked PDF generation using the bundled pdf-lib library. */
+/* Map index with internal navigation and external PDF GoToR links. */
 (function(root){
  'use strict';
  async function build(project, sources, options = {}, progress = ()=>{}) {
-  const {PDFDocument, StandardFonts, rgb, PDFName, PDFNumber, PDFHexString} = PDFLib;
-  const C=NavigatorCore, combined=project.settings.mode==='combined';
+  const {PDFDocument, StandardFonts, rgb, PDFName, PDFNumber, PDFHexString,PDFString} = PDFLib;
+  const C=NavigatorCore, linked=project.settings.mode==='linked';
   if (!project.rows.length) throw new Error('Import an Excel index first.');
   const matches=C.matchSources(project.rows,sources);
   const unresolved=project.rows.filter(r=>matches.get(r.id)?.state!=='Matched');
-  if (combined && unresolved.length) throw new Error(`${unresolved.length} document${unresolved.length===1?' is':'s are'} not matched. Add the PDF folder or choose the correct file in Documents. For a layout review, choose Index-only draft.`);
+  if (linked && unresolved.length) throw new Error(`${unresolved.length} document${unresolved.length===1?' is':'s are'} not matched. Add the PDF folder or choose the correct file in Documents. For a layout review, choose Layout draft.`);
   progress('Preparing PDF layout…');
   const pdf=await PDFDocument.create(), font=await pdf.embedFont(StandardFonts.Helvetica), bold=await pdf.embedFont(StandardFonts.HelveticaBold);
-  pdf.setTitle(project.settings.title); pdf.setAuthor('Offline PDF Navigator'); pdf.setSubject('Interactive document index and map navigator'); pdf.setCreator('Offline PDF Navigator - draft 0.1');
+  pdf.setTitle(project.settings.title); pdf.setAuthor('Offline PDF Navigator'); pdf.setSubject('Interactive map index with separate PDF file links'); pdf.setCreator('Offline PDF Navigator - draft 0.2');
   const [W,H]=project.settings.pageSize==='letter'?[792,612]:[1224,792], M=project.settings.pageSize==='letter'?20:26;
   const navy=rgb(.08,.20,.34), ink=rgb(.12,.18,.26), muted=rgb(.36,.42,.49), line=rgb(.77,.82,.87), pale=rgb(.95,.96,.98), blue=rgb(.05,.31,.67), amber=rgb(.90,.58,.08), gray=rgb(.47,.52,.58), green=rgb(.22,.42,.28);
   const pending=[], imageCache=new Map(), sourceInfo=new Map();
@@ -45,6 +45,7 @@
    return result.length?result:[''];
   }
   function link(page,rect,target){if(!target)return;const annotation=pdf.context.obj({Type:'Annot',Subtype:'Link',Rect:rect,Border:[0,0,0],Dest:[target.ref,PDFName.of('Fit')]});page.node.addAnnot(pdf.context.register(annotation));}
+  function remoteLink(page,rect,target){const spec=pdf.context.obj({Type:'Filespec',F:PDFString.of(target),UF:PDFHexString.fromText(target)});const annotation=pdf.context.obj({Type:'Annot',Subtype:'Link',Rect:rect,Border:[0,0,0],Contents:PDFHexString.fromText('Open separate PDF: '+target),A:{S:'GoToR',F:spec,D:[0,PDFName.of('Fit')],NewWindow:true}});page.node.addAnnot(pdf.context.register(annotation));}
   function rect(page,x,y,w,h,color,border){page.drawRectangle({x,y,width:w,height:h,color,borderColor:border,borderWidth:border ? 0.5 : 0});}
   function rule(page,x,y,w){page.drawLine({start:{x,y},end:{x:x+w,y},thickness:.6,color:line});}
   function button(page,label,x,y,w,target){rect(page,x,y,w,22,rgb(1,1,1),line);write(page,label,x+8,y+7,8,navy,bold);link(page,[x,y,x+w,y+22],target);}
@@ -57,7 +58,6 @@
   const main=pdf.addPage([W,H]);
   const coverCount=project.settings.pageSize==='letter'?14:22;
   const directory=[];
-  for(let i=coverCount;i<groups.length;i+=24)directory.push({page:pdf.addPage([W,H]),groups:groups.slice(i,i+24)});
   const mapW=project.settings.pageSize==='letter'?210:310, gap=22, tableW=W-2*M-mapW-gap;
   const small=project.settings.pageSize==='letter'?7:8.5, tableTop=H-126, bottom=62;
   const fixed=project.settings.pageSize==='letter'?[25,40,45,65,66,28]:[30,52,62,100,90,36];
@@ -77,35 +77,8 @@
    if(chunk.length)push();
    const owned=plans.filter(p=>p.group.id===group.id);owned.forEach((p,i)=>{p.index=i;p.total=owned.length;});
   }
-  if(combined){
-   const selected=[];const selectedIds=new Set();
-   for(const row of project.rows){const s=matches.get(row.id).source;if(!selectedIds.has(s.id)){selectedIds.add(s.id);selected.push(s);}}
-   let n=0;
-   for(const source of selected){
-    progress(`Including drawing ${++n} of ${selected.length}: ${source.file.name}`);
-    let sourcePdf;
-    try{sourcePdf=await PDFDocument.load(await source.file.arrayBuffer());}catch(error){throw new Error(`Could not open ${source.file.name}. Use an unlocked, readable PDF. Details: ${error.message}`);}
-    if(!sourcePdf.getPageCount())throw new Error(source.file.name+' has no pages.');
-    const copied=await pdf.copyPages(sourcePdf,sourcePdf.getPageIndices());
-    const sourceRows=project.rows.filter(r=>matches.get(r.id)?.source?.id===source.id);
-    const owner=firstGroup.get(sourceRows[0].groupId);
-    const added=copied.map(p=>pdf.addPage(p));
-    sourceInfo.set(source.id,{first:added[0],count:added.length});
-    if(project.settings.navigation){
-     added.forEach((page,i)=>{
-      const crop=page.getCropBox(), media=page.getMediaBox(), strip=24, y=crop.y-strip;
-      const mx=Math.min(media.x,crop.x),my=Math.min(media.y,y),right=Math.max(media.x+media.width,crop.x+crop.width),top=Math.max(media.y+media.height,crop.y+crop.height);
-      page.setMediaBox(mx,my,right-mx,top-my);page.setCropBox(crop.x,y,crop.width,crop.height+strip);
-      rect(page,crop.x,y,crop.width,strip,pale);const textSize=Math.min(8,Math.max(5,crop.width/85));
-      write(page,'MAP',crop.x+8,y+8,textSize,blue,bold);link(page,[crop.x,y,crop.x+46,y+strip],main);
-      write(page,'RETURN TO LIST',crop.x+55,y+8,textSize,blue,bold);link(page,[crop.x+48,y,crop.x+155,y+strip],owner);
-      const label=fit(`${source.file.name}  |  ${i+1} / ${added.length}`,Math.max(40,crop.width-180),textSize);
-      write(page,label,crop.x+167,y+8,textSize,muted);
-     });
-    }
-    await new Promise(resolve=>setTimeout(resolve,0));
-   }
-  }
+  const targets=linked?C.linkTargets(project.rows,sources):new Map();let checked=0;
+  for(const [id,target]of targets){progress(`Checking linked PDF ${++checked} of ${targets.size}: ${target.source.file.name}`);try{const sourcePdf=await PDFDocument.load(await target.source.file.arrayBuffer());if(!sourcePdf.getPageCount())throw new Error('No pages');sourceInfo.set(id,{count:sourcePdf.getPageCount(),path:target.path});}catch(error){throw new Error('Could not open '+target.source.file.name+'. Use an unlocked, readable PDF. '+error.message);}await new Promise(resolve=>setTimeout(resolve,0));}
   async function drawMap(page,box,active=null,custom=null,clickable=true){
    rect(page,box.x,box.y,box.w,box.h,pale,line);
    const img=custom?await image(custom):mainImage;
@@ -113,6 +86,7 @@
    const scale=Math.min(box.w/img.width,box.h/img.height),w=img.width*scale,h=img.height*scale,x=box.x+(box.w-w)/2,y=box.y+(box.h-h)/2;
    page.drawImage(img,{x,y,width:w,height:h,opacity:active ? 0.82 : 1});
    if(custom)return;
+   if(clickable){for(const group of groups){for(const hs of group.hotspots||[]){const annotation=pdf.context.obj({Type:'Annot',Subtype:'Link',Rect:[x+w*hs.x,y+h*(1-hs.y-hs.h),x+w*(hs.x+hs.w),y+h*(1-hs.y)],Border:[0,0,0],Contents:PDFHexString.fromText('Open group '+group.code+' - '+group.name),Dest:[firstGroup.get(group.id).ref,PDFName.of('Fit')]});page.node.addAnnot(pdf.context.register(annotation));}}}
    for(const group of groups){
     if(group.x===null||group.y===null)continue;
     if(active&&active.id!==group.id)continue;
@@ -129,16 +103,18 @@
   titleLines.forEach(t=>{write(main,t,rightX,y,titleSize,navy,bold);y-=titleSize+4;});
   wrap(project.settings.subtitle,rightW,9).slice(0,2).forEach(t=>{write(main,t,rightX,y,9,muted);y-=13;});
   y-=8;rule(main,rightX,y,rightW);y-=23;
-  for(const t of ['Click a map marker or a group name to open its document list.',combined?'Click a file name to open its included drawing.':'INDEX-ONLY DRAFT: source drawings are not included.','Use Map and Return to list to navigate.']){write(main,fit(t,rightW,9),rightX,y,9,navy);y-=14;}
+  for(const t of ['Click a map button or group name to open its document list.',linked?'File links open separate PDFs and request a new reader window.':'LAYOUT DRAFT: document file links are not included.','Keep this index beside its Documents folder. Use Map to return.']){write(main,fit(t,rightW,9),rightX,y,9,navy);y-=14;}
   y-=8;const cw=(rightW-16)/3;
-  [[project.rows.length,'indexed files'],[groups.length,'groups'],[combined?sourceInfo.size:0,'PDFs included']].forEach(([n,label],i)=>{const x=rightX+i*(cw+8);rect(main,x,y-40,cw,42,pale);write(main,String(n),x+10,y-18,19,navy,bold);write(main,label,x+10,y-32,8,muted);});
+  [[project.rows.length,'indexed files'],[groups.length,'groups'],[sourceInfo.size,'separate PDF files']].forEach(([n,label],i)=>{const x=rightX+i*(cw+8);rect(main,x,y-40,cw,42,pale);write(main,String(n),x+10,y-18,19,navy,bold);write(main,label,x+10,y-32,8,muted);});
   y-=58;
   const statuses=[['Inside area',green],['Needs review',amber],['Outside area',gray],['Not set',muted]];
   let sx=rightX;for(const [label,color]of statuses){const n=project.rows.filter(r=>r.status===label).length;const s=`${label}: ${n}`;write(main,s,sx,y,7.5,color);sx+=width(s,7.5)+14;}
   y-=25;write(main,'DOCUMENT GROUPS',rightX,y,8,muted,bold);y-=18;
   const available=Math.floor((y-83)/20),shown=Math.min(coverCount,Math.max(0,available));
-  // Long titles reduce cover capacity. Put displaced groups on an extra directory page.
-  if(shown<Math.min(coverCount,groups.length))directory.unshift({page:pdf.insertPage(1,[W,H]),groups:groups.slice(shown,coverCount)});
+  // Measure directory rows against fixed content bounds, independent of paper size.
+  const directoryTop=H-112,directoryBottom=92;let directoryRows=[],directoryUsed=0;
+  function pushDirectory(){directory.push({page:pdf.insertPage(1+directory.length,[W,H]),items:directoryRows});directoryRows=[];directoryUsed=0;}
+  for(const group of groups.slice(shown)){const lines=wrap(group.name,tableW-48,10.5),height=Math.max(28,lines.length*14+10);if(height>directoryTop-directoryBottom)throw new Error('Group name is too long for the directory: '+group.code);if(directoryRows.length&&directoryUsed+height>directoryTop-directoryBottom)pushDirectory();directoryRows.push({group,lines,height});directoryUsed+=height;}if(directoryRows.length)pushDirectory();
   for(const group of groups.slice(0,shown)){
    badge(main,group.code,rightX+9,y+3,9,groupColor(group));write(main,fit(group.name,rightW-60,9),rightX+26,y,9,navy);
    const count=project.rows.filter(r=>r.groupId===group.id).length;write(main,String(count),W-M-width(count,9),y,9,navy);
@@ -146,17 +122,18 @@
   }
   if(directory.length){button(main,'More groups >',rightX,50,105,directory[0].page);}
   else write(main,'Every group is listed above.',rightX,57,8,muted);
-  const unplaced=groups.filter(g=>g.x===null).length;
-  write(main,`${unplaced} group${unplaced===1?'':'s'} without a map marker. All groups remain in the directory.`,rightX,35,7.5,muted);
+  const unplaced=groups.filter(g=>g.x===null&&!(g.hotspots||[]).length).length;
+  write(main,fit(`${unplaced} group${unplaced===1?'':'s'} without a map button. All groups remain in the directory.`,rightW,7.5),rightX,35,7.5,muted);
   const countPages=pdf.getPageCount();
   function footer(page,label){const usable=W-2*M;rule(page,M,28,usable);write(page,fit(project.settings.title,usable*.37,7),M,16,7,muted);write(page,fit(label,usable*.39,7),M+usable*.40,16,7,muted);const i=pdf.getPages().indexOf(page)+1;const s=`Page ${i} of ${countPages}`;write(page,s,W-M-width(s,7),16,7,muted);}
   footer(main,'Map navigator');
   for(let i=0;i<directory.length;i++){
    const d=directory[i];write(d.page,'Document directory - continued',M,H-M-22,22,navy,bold);button(d.page,'< Map',W-M-65,H-M-23,65,main);
    await drawMap(d.page,{x:W-M-mapW,y:H-126-390,w:mapW,h:390});
-   let yy=H-116;
-   d.groups.forEach(group=>{badge(d.page,group.code,M+12,yy+2,10,groupColor(group));write(d.page,fit(group.name,tableW-80,11),M+34,yy,11,navy);link(d.page,[M,yy-7,M+tableW,yy+15],firstGroup.get(group.id));yy-=24;});
-   if(i+1<directory.length)button(d.page,'Next directory >',M,42,116,directory[i+1].page);
+   let yy=directoryTop;
+   d.items.forEach(({group,lines,height})=>{badge(d.page,group.code,M+12,yy-14,10,groupColor(group));lines.forEach((t,k)=>write(d.page,t,M+34,yy-17-k*14,10.5,navy));link(d.page,[M,yy-height,M+tableW,yy],firstGroup.get(group.id));rule(d.page,M,yy-height,tableW);yy-=height;});
+   if(i>0)button(d.page,'< Previous directory',M,44,128,directory[i-1].page);
+   if(i+1<directory.length)button(d.page,'Next directory >',M+138,44,116,directory[i+1].page);
    footer(d.page,'Group directory');
   }
   for(const plan of plans){
@@ -171,7 +148,7 @@
    if(groupIndex>0)button(page,'< Previous',buttonsX+65,H-M-24,78,firstGroup.get(groups[groupIndex-1].id));
    if(groupIndex<groups.length-1)button(page,'Next >',buttonsX+151,H-M-24,77,firstGroup.get(groups[groupIndex+1].id));
    const included=project.rows.filter(r=>r.groupId===group.id&&matches.get(r.id)?.state==='Matched').length;
-   write(page,`${combined?included:0} files included${plan.total>1?`  |  List ${plan.index+1} of ${plan.total}`:''}${combined?'':'  |  INDEX-ONLY DRAFT'}`,M+46,H-105,9,combined?green:muted,bold);
+   write(page,`${linked?included:0} files linked separately${plan.total>1?`  |  List ${plan.index+1} of ${plan.total}`:''}${linked?'':'  |  LAYOUT DRAFT'}`,M+46,H-105,9,linked?green:muted,bold);
    const mapBox={x:W-M-mapW,y:H-126-(project.settings.pageSize==='letter'?300:420),w:mapW,h:project.settings.pageSize==='letter'?300:420};
    await drawMap(page,mapBox,group,group.image,false);link(page,[mapBox.x,mapBox.y,mapBox.x+mapBox.w,mapBox.y+mapBox.h],main);
    write(page,'Click the locator map to return to the main map.',mapBox.x,mapBox.y-13,7,muted);
@@ -183,11 +160,11 @@
    top-=24;
    plan.rows.forEach(({row,filenameLines,height},rowIndex)=>{
     if(rowIndex%2===0)rect(page,M,top-height,tableW,height,pale);
-    const match=matches.get(row.id),info=combined&&match?.source?sourceInfo.get(match.source.id):null;
+    const match=matches.get(row.id),info=linked&&match?.source?sourceInfo.get(match.source.id):null;
     const values=[row.label,row.period,null,row.folder,row.type,row.status,info?String(info.count):'-'];
     let x=M;
     values.forEach((v,i)=>{
-     if(i===2){filenameLines.forEach((t,k)=>write(page,t,x+5,top-14-k*(small+3),small,info?blue:ink));if(info)link(page,[x,top-height,x+colWidths[i],top],info.first);}
+     if(i===2){filenameLines.forEach((t,k)=>write(page,t,x+5,top-14-k*(small+3),small,info?blue:ink));if(info)remoteLink(page,[x,top-height,x+colWidths[i],top],info.path);}
      else write(page,fit(v,colWidths[i]-10,small),x+5,top-14,small,i===5?(v==='Needs review'?amber:v==='Inside area'?green:muted):ink);
      x+=colWidths[i];
     });
@@ -205,7 +182,7 @@
   outlines.forEach(o=>o.ref=ctx.register(o.dict));outlines.forEach((o,i)=>{if(i)o.dict.set(PDFName.of('Prev'),outlines[i-1].ref);if(i+1<outlines.length)o.dict.set(PDFName.of('Next'),outlines[i+1].ref);});
   outline.set(PDFName.of('First'),outlines[0].ref);outline.set(PDFName.of('Last'),outlines.at(-1).ref);outline.set(PDFName.of('Count'),PDFNumber.of(outlines.length));pdf.catalog.set(PDFName.of('Outlines'),outlineRef);pdf.catalog.set(PDFName.of('PageMode'),PDFName.of('UseOutlines'));
   await Promise.all(pending);progress('Saving the PDF…');
-  return {bytes:await pdf.save(),pages:pdf.getPageCount(),documents:sourceInfo.size,indexPages:1+directory.length+plans.length};
+  return {bytes:await pdf.save(),pages:pdf.getPageCount(),documents:sourceInfo.size,indexPages:1+directory.length+plans.length,links:[...targets.values()]};
  }
  root.NavigatorPDF={build};
 })(globalThis);

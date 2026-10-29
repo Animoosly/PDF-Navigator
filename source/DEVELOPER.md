@@ -1,39 +1,46 @@
-# Offline PDF Navigator draft 0.1
+# Offline PDF Navigator draft 0.2
 
-The delivered HTML is self-contained. Its bundled libraries make no network
-requests. To edit the program, modify these source files and run:
+The HTML contains its PDF and ZIP libraries and makes no network requests.
+Edit these sources and run `node build.js "../PDF Navigator.html"` to rebuild.
+Run `node test.js` for the dependency-free core tests.
 
-```
-node build.js "../PDF Navigator.html"
-node test.js
-```
+- `core.js`: .xlsx XML import, group mapping, source matching, project validation,
+  legacy-project migration, and safe, unique relative output paths.
+- `pdf.js`: index layout, height-based directory pagination, group-list pagination,
+  bookmarks, transparent hotspot annotations, and separate-file PDF links.
+- `app.js`: local editor, transparent button drawing/moving/resizing, labels,
+  file selection, project save/restore, PDF preview and linked-folder ZIP export.
+- `demo.js`: clearly marked fictional maps and separate sample drawing files.
+- `index.html`: UI and CSS. Editor outlines are not painted into the output PDF.
+- `vendor/`: bundled pdf-lib and JSZip. Licenses are in the package root.
 
-No package installation is needed. `vendor/` contains pdf-lib 1.17.1 and JSZip
-(see the bundled license files for their terms). The app uses standard browser
-File APIs, DOMParser for .xlsx XML, Canvas for map pictures, and pdf-lib for PDF
-assembly. It does not execute spreadsheet formulas or PDF scripts.
+Project schema version 2 adds normalized rectangles to `group.hotspots`:
+`{id, x, y, w, h}` with coordinates relative to the image and origin at its top
+left. The main PDF map fits the image without stretching, then transforms these
+coordinates into PDF annotation rectangles. Each hotspot is a borderless `/Link`
+with an internal destination and no appearance stream. Group codes are display
+labels; stable group IDs retain document and hotspot assignments after renaming.
 
-- `core.js`: workbook reader, mappings, groups, source matching, project validation.
-- `pdf.js`: PDF layout, pagination, internal links, bookmarks, optional attachment.
-- `app.js`: local editor, imports, source selection, map markers, saved projects.
-- `demo.js`: clearly marked fictional map and drawing examples.
-- `index.html`: interface and CSS.
-- `README.txt` in the package root: user instructions embedded into the HTML.
+Version 1 projects migrate to version 2 without changing saved groups, images,
+or marker positions. The old `combined` output mode migrates to `linked`.
+There is no source-page copying or PDF attachment in the index builder. Only
+the optional original Excel workbook may be attached.
 
-The project JSON contains index metadata and JPEG data URLs, not source PDF bytes.
-Manual source choices are keyed by path, file size, and modification timestamp;
-if those change, the user must select the source again. Excel is read from the
-selected worksheet only, including shared strings and inline strings. Formula
-cells require their saved cached value; formulas are not evaluated. Unsupported
-workbook or document-level PDF features should be handled explicitly rather than
-silently approximated. Originals remain the source of record.
+Source PDFs are read for validation and page counts. External links use `/GoToR`,
+a relative file specification with `/F` and Unicode `/UF`, `/D [0 /Fit]`, and
+`/NewWindow true`, following ISO 32000-1 section 12.6.4.3. Actual opening behavior
+depends on the viewer. No viewer-independent window guarantee is possible.
 
-Draft scope: local, single-user workflow; no OCR, map georeferencing, automatic
-boundary decisions, existing-PDF updates, or lossless preservation of PDF forms,
-signatures, portfolios, and scripts. A shared source PDF returns to its first
-referencing group's list. Page-level annotations are copied with source pages.
+`linkTargets` assigns safe, case-insensitively unique output paths under
+`Documents/`. The same targets are used for the PDF and ZIP. ZIP source entries
+contain the original file bytes. A standalone downloaded index requires the same
+folder structure; the linked ZIP assembles it automatically. File links must be
+tested after extraction in a desktop PDF reader, not against a blob preview URL.
 
-The map and group directory link to internal group-list pages. File links go to
-the first copied page of the chosen PDF. Navigation strips are drawn in an added
-crop-box margin, without moving or painting over the source content. Rotated
-pages retain their rotation. Every group has a PDF bookmark.
+Directory rows are wrapped and measured. Every continuation page uses the content
+interval from y=92 through y=pageHeight-112. Navigation sits below that interval
+and above the footer. Group-file tables have separate bounded pagination.
+
+Project JSON holds metadata and map images, never source PDF bytes. Manual source
+choices use path, size, and timestamp keys; users reselect changed files. Excel
+formulas are not evaluated; a formula column needs its saved cached values.

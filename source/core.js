@@ -107,7 +107,7 @@
    const groupKey = suppliedCode ? 'code:' + suppliedCode.toLowerCase() : 'name:' + groupName.toLowerCase();
    if (!byKey.has(groupKey)) {
     const id = 'g' + (groups.length + 1);
-    const group = {id, code: suppliedCode || 'G' + (groups.length + 1), name: groupName, subtitle: '', notes: '', x: null, y: null, image: null};
+    const group = {id, code: suppliedCode || 'G' + (groups.length + 1), name: groupName, subtitle: '', notes: '', x: null, y: null, image: null, hotspots:[]};
     groups.push(group); byKey.set(groupKey, id);
     if (groups.length > 2000) throw new Error('This draft supports up to 2,000 groups per project.');
    }
@@ -141,23 +141,37 @@
   return result;
  }
  function validateProject(value) {
-  if (!value || value.format !== 'offline-pdf-navigator' || value.version !== 1 || !Array.isArray(value.rows) || !Array.isArray(value.groups) || value.rows.length > 20000 || value.groups.length > 2000) throw new Error('This is not a supported PDF Navigator project.');
+  if (!value || value.format !== 'offline-pdf-navigator' || ![1,2].includes(value.version) || !Array.isArray(value.rows) || !Array.isArray(value.groups) || value.rows.length > 20000 || value.groups.length > 2000) throw new Error('This is not a supported PDF Navigator project.');
+  value=JSON.parse(JSON.stringify(value));
+  if(value.version===1){value.version=2;value.groups.forEach(g=>{g.hotspots=[];});if(value.settings?.mode==='combined')value.settings.mode='linked';}
   const isText = (s,max=20000) => typeof s === 'string' && s.length <= max;
   const validImage = image => image === null || isText(image, 40000000) && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(image);
   const ids = new Set(), codes = new Set();
   for (const g of value.groups) {
    if (!g || !['id','name','code','subtitle','notes'].every(k=>isText(g[k])) || !g.id || !g.name.trim() || !g.code.trim() || ids.has(g.id) || codes.has(g.code.toLowerCase()) || !validImage(g.image) || (g.x === null) !== (g.y === null) || ![g.x,g.y].every(p=>p === null || Number.isFinite(p) && p>=0 && p<=1)) throw new Error('The project contains an invalid group.');
    ids.add(g.id); codes.add(g.code.toLowerCase());
+   if(!Array.isArray(g.hotspots)||g.hotspots.length>100||!g.hotspots.every(h=>h&&isText(h.id)&&[h.x,h.y,h.w,h.h].every(Number.isFinite)&&h.x>=0&&h.y>=0&&h.w>0&&h.h>0&&h.x+h.w<=1.000001&&h.y+h.h<=1.000001)||new Set(g.hotspots.map(h=>h.id)).size!==g.hotspots.length)throw new Error('The project contains an invalid transparent map button.');
   }
   const rowIds = new Set();
   for (const r of value.rows) {
    if (!r || !['id','label','filename','folder','period','type','description','status','groupId'].every(k=>isText(r[k])) || !/\.pdf$/i.test(r.filename) || rowIds.has(r.id) || !ids.has(r.groupId) || !['Inside area','Outside area','Needs review','Not set'].includes(r.status) || !(r.override===null || isText(r.override))) throw new Error('The project contains an invalid document.');
    rowIds.add(r.id);
   }
-  if (!value.settings || !isText(value.settings.title,300) || !isText(value.settings.subtitle,500) || !['tabloid','letter'].includes(value.settings.pageSize) || !['combined','index'].includes(value.settings.mode) || typeof value.settings.navigation !== 'boolean' || !validImage(value.map)) throw new Error('The project settings are invalid.');
+  if (!value.settings || !isText(value.settings.title,300) || !isText(value.settings.subtitle,500) || !['tabloid','letter'].includes(value.settings.pageSize) || !['linked','index'].includes(value.settings.mode) || !validImage(value.map)) throw new Error('The project settings are invalid.');
   return JSON.parse(JSON.stringify(value));
  }
- const api = {norm,path,base,aliases,detectMapping,readWorkbook,normalizeStatus,yearText,importRows,sourceId,matchSources,validateProject};
+ function safeSegment(s){let v=String(s).normalize('NFC').replace(/[<>:"|?*\u0000-\u001f]/g,'_').replace(/[. ]+$/g,'');if(!v||v==='.'||v==='..')v='_';if(/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(v))v='_'+v;return v;}
+ function linkTargets(rows,sources){
+  const matches=matchSources(rows,sources),targets=new Map(),used=new Set();
+  for(const row of rows){const source=matches.get(row.id)?.source;if(!source||targets.has(source.id))continue;
+   const parts=source.path.replace(/\\/g,'/').split('/').filter(Boolean).map(safeSegment);if(!parts.length)parts.push(safeSegment(source.file.name));
+   let candidate='Documents/'+parts.join('/'),n=2;const original=candidate;
+   while(used.has(candidate.toLowerCase()))candidate=original.replace(/\.pdf$/i,'')+' ('+(n++)+').pdf';
+   used.add(candidate.toLowerCase());targets.set(source.id,{source,path:candidate});
+  }
+  return targets;
+ }
+ const api = {norm,path,base,aliases,detectMapping,readWorkbook,normalizeStatus,yearText,importRows,sourceId,matchSources,validateProject,safeSegment,linkTargets};
  root.NavigatorCore = api;
  if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);

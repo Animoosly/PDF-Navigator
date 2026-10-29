@@ -2,20 +2,23 @@
  'use strict';
  const C=NavigatorCore,$=id=>document.getElementById(id),escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  $('choose-excel').parentElement.append($('attach-only'));
- function blank(){return {format:'offline-pdf-navigator',version:1,settings:{title:'Document archive',subtitle:'Map navigator and document index',pageSize:'tabloid',mode:'combined',navigation:true},map:null,groups:[],rows:[],example:false};}
- let project=blank(),sources=[],excel=null,pendingWorkbook=null,pendingExcel=null,selected=null,busy=false,dirty=false,pdfUrl=null,pdfBytes=null,pdfStale=false,pdfName='',editing=null,dragging=null;
+ function blank(){return {format:'offline-pdf-navigator',version:2,settings:{title:'Document archive',subtitle:'Map navigator and document index',pageSize:'tabloid',mode:'linked'},map:null,groups:[],rows:[],example:false};}
+ let project=blank(),sources=[],excel=null,pendingWorkbook=null,pendingExcel=null,selected=null,busy=false,dirty=false,pdfUrl=null,pdfBytes=null,pdfStale=false,pdfName='',editing=null,dragging=null,selectedHotspot=null,pdfLinkedFiles=[];
  function message(value,error=false){$('status').textContent=value;$('status').classList.toggle('error',error);}
- function changed(){dirty=true;if(pdfUrl){pdfStale=true;$('preview-info').textContent='The project has changed. Create the PDF again to update this preview.';$('download-pdf').disabled=true;}}
+ function changed(){dirty=true;if(pdfUrl){pdfStale=true;$('preview-info').textContent='The project has changed. Create the PDF again to update this preview.';$('download-pdf').disabled=true;$('download-package').disabled=true;}}
  function setBusy(value){busy=value;for(const element of document.querySelectorAll('button,input,select,textarea'))element.disabled=value;if(!value)render();}
  function download(data,name,type){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
- function settingsToUi(){for(const [id,k] of [['title','title'],['subtitle','subtitle'],['page-size','pageSize'],['mode','mode']])$(id).value=project.settings[k];$('navigation').checked=project.settings.navigation;}
- function clearPreview(){if(pdfUrl)URL.revokeObjectURL(pdfUrl);pdfUrl=null;pdfBytes=null;pdfStale=false;$('pdf-preview').removeAttribute('src');$('pdf-preview').hidden=true;$('preview-empty').hidden=false;$('download-pdf').disabled=true;$('preview-info').textContent='Create a PDF to review the exact exported pages here.';}
+ function settingsToUi(){for(const [id,k] of [['title','title'],['subtitle','subtitle'],['page-size','pageSize'],['mode','mode']])$(id).value=project.settings[k];}
+ function clearPreview(){if(pdfUrl)URL.revokeObjectURL(pdfUrl);pdfUrl=null;pdfBytes=null;pdfLinkedFiles=[];pdfStale=false;$('pdf-preview').removeAttribute('src');$('pdf-preview').hidden=true;$('preview-empty').hidden=false;$('download-pdf').disabled=true;$('download-package').disabled=true;$('preview-info').textContent='Create an index to review its pages. Test external file links from the extracted ZIP in a desktop PDF reader.';}
  function renderGroups(){
-  $('group-list').innerHTML=project.groups.length?project.groups.map(g=>{const rows=project.rows.filter(r=>r.groupId===g.id);return `<button class="group-button${g.id===selected?' selected':''}" data-group="${escape(g.id)}"><span class="group-code">${escape(g.code)}</span><span><span class="group-name">${escape(g.name)}</span><span class="group-meta" style="display:block">${rows.length} files · ${g.x===null?'No marker':'Marker placed'}${g.image?' · Group image':''}</span></span></button>`;}).join(''):'<div class="empty">Import an index to see your groups.</div>';
+  $('group-list').innerHTML=project.groups.length?project.groups.map(g=>{const rows=project.rows.filter(r=>r.groupId===g.id);return `<button class="group-button${g.id===selected?' selected':''}" data-group="${escape(g.id)}"><span class="group-code">${escape(g.code)}</span><span><span class="group-name">${escape(g.name)}</span><span class="group-meta" style="display:block">${rows.length} files · ${(g.hotspots||[]).length} transparent buttons${g.x!==null?' · Marker':''}${g.image?' · Group image':''}</span></span></button>`;}).join(''):'<div class="empty">Import an index to see your groups.</div>';
  }
  function renderEditor(){const g=project.groups.find(g=>g.id===selected);$('group-editor').hidden=!g;if(!g)return;for(const k of ['code','name','subtitle','notes'])$('group-'+k).value=g[k];$('group-error').textContent='';$('group-image-preview').hidden=!g.image;if(g.image)$('group-image-preview').src=g.image;else $('group-image-preview').removeAttribute('src');$('remove-group-image').hidden=!g.image;$('remove-marker').disabled=g.x===null;$('delete-group').hidden=project.rows.some(r=>r.groupId===g.id);}
  function renderMarkers(){
   $('markers').innerHTML=project.map?project.groups.filter(g=>g.x!==null).map(g=>`<button class="marker${g.id===selected?' selected':''}" data-marker="${escape(g.id)}" style="left:${g.x*100}%;top:${g.y*100}%" title="${escape(g.code+' - '+g.name)}" aria-label="${escape('Move marker '+g.code)}">${escape(g.code)}</button>`).join(''):'';
+  if(project.map)$('markers').innerHTML+=project.groups.flatMap(g=>(g.hotspots||[]).map(h=>`<div class="hotspot${h.id===selectedHotspot?' selected':''}" data-hotspot="${escape(h.id)}" data-hotgroup="${escape(g.id)}" style="left:${h.x*100}%;top:${h.y*100}%;width:${h.w*100}%;height:${h.h*100}%" title="${escape(g.code+' - '+g.name)}"><span>${escape(g.code)}</span><div class="resize-handle" data-resize="1" aria-label="Resize transparent button"></div></div>`)).join('');
+  $('markers').classList.toggle('hide-guides',!$('show-guides').checked);$('delete-hotspot').disabled=!selectedHotspot;
+  $('map-info').textContent=`${project.groups.filter(g=>g.x!==null||(g.hotspots||[]).length).length} of ${project.groups.length} groups have a map button or marker.`;
  }
  function renderDocuments(){
   const matches=C.matchSources(project.rows,sources),q=$('search').value.toLowerCase().trim(),filter=$('doc-filter').value;
@@ -36,12 +39,12 @@
   $('source-info').innerHTML=`<strong>${sources.length.toLocaleString()}</strong> source PDFs added${project.rows.length?`<br><strong>${matched.toLocaleString()}</strong> of ${project.rows.length.toLocaleString()} index rows matched${matched<project.rows.length?` · ${project.rows.length-matched} need attention`:''}`:''}`;
   $('clear-sources').hidden=!sources.length;
   $('save-project').disabled=!project.rows.length||busy;$('create').disabled=!project.rows.length||busy;$('add-group').disabled=!project.rows.length||busy;$('remap').disabled=!pendingWorkbook||busy;
-  $('attach-excel').disabled=!excel||busy;$('attach-only').hidden=!project.rows.length||!!excel;$('download-pdf').disabled=!pdfBytes||pdfStale||busy;$('map-info').textContent=`${project.groups.filter(g=>g.x!==null).length} of ${project.groups.length} groups placed on the main map.`;
+  $('attach-excel').disabled=!excel||busy;$('attach-only').hidden=!project.rows.length||!!excel;$('download-pdf').disabled=!pdfBytes||pdfStale||busy;$('download-package').disabled=!pdfBytes||pdfStale||busy;$('renumber').disabled=!project.groups.length||busy;$('map-info').textContent=`${project.groups.filter(g=>g.x!==null||(g.hotspots||[]).length).length} of ${project.groups.length} groups have a map button or marker.`;
  }
  function switchTab(name){for(const b of document.querySelectorAll('[data-tab]'))b.classList.toggle('active',b.dataset.tab===name);for(const n of ['map','documents','preview'])$('tab-'+n).hidden=n!==name;}
  for(const b of document.querySelectorAll('[data-tab]'))b.onclick=()=>switchTab(b.dataset.tab);
  for(const [id,k]of [['title','title'],['subtitle','subtitle'],['page-size','pageSize'],['mode','mode']])$(id).addEventListener('input',()=>{project.settings[k]=$(id).value;changed();});
- $('navigation').onchange=()=>{project.settings.navigation=$('navigation').checked;changed();};$('attach-excel').onchange=changed;
+ $('attach-excel').onchange=changed;
  $('choose-excel').onclick=()=>$('excel-input').click();
  $('attach-only').onclick=()=>$('attach-input').click();
  $('attach-input').onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;setBusy(true);try{await C.readWorkbook(file);excel={name:file.name,bytes:new Uint8Array(await file.arrayBuffer())};changed();message('Excel file attached. Your saved index, groups, and marker positions were kept.');}catch(error){message(error.message,true);}finally{setBusy(false);}};
@@ -97,7 +100,7 @@
  }
  $('choose-map').onclick=()=>$('map-input').click();$('group-image-button').onclick=()=>$('group-image-input').click();
  for(const [id,isGroup]of [['map-input',false],['group-image-input',true]])$(id).onchange=async e=>{const file=e.target.files[0];e.target.value='';if(!file)return;const groupId=selected;setBusy(true);try{const data=await readImage(file);if(isGroup){const g=project.groups.find(g=>g.id===groupId);if(g)g.image=data;}else project.map=data;changed();message(isGroup?'Group map image added. Other groups will continue using the main map.':'Main map added. Select a group and click the image to place its marker.');}catch(error){message('Could not read that image: '+error.message,true);}finally{setBusy(false);}};
- $('group-list').onclick=e=>{const button=e.target.closest('[data-group]');if(button&&!busy){if(!saveGroup(false))return;selected=button.dataset.group;renderGroups();renderEditor();renderMarkers();}};
+ $('group-list').onclick=e=>{const button=e.target.closest('[data-group]');if(button&&!busy){if(!saveGroup(false))return;selected=button.dataset.group;selectedHotspot=null;renderGroups();renderEditor();renderMarkers();}};
  function saveGroup(showMessage=true){
   const g=project.groups.find(g=>g.id===selected);if(!g)return true;
   const code=$('group-code').value.trim(),name=$('group-name').value.trim();
@@ -108,14 +111,33 @@
  }
  $('save-group').onclick=()=>saveGroup();
  for(const field of ['code','name','subtitle','notes'])$('group-'+field).addEventListener('change',()=>saveGroup(false));
- $('add-group').onclick=()=>{if(!saveGroup(false))return;let n=1;while(project.groups.some(g=>g.code.toLowerCase()==='g'+n))n++;const g={id:'g'+Date.now(),code:'G'+n,name:'New group',subtitle:'',notes:'',x:null,y:null,image:null};project.groups.push(g);selected=g.id;changed();render();message('New group added. Rename it, then use Documents > Edit to move documents into it.');};
+ $('add-group').onclick=()=>{if(!saveGroup(false))return;let n=1;while(project.groups.some(g=>g.code.toLowerCase()==='g'+n))n++;const g={id:'g'+Date.now(),code:'G'+n,name:'New group',subtitle:'',notes:'',x:null,y:null,image:null,hotspots:[]};project.groups.push(g);selected=g.id;changed();render();message('New group added. Set any unique group label, then use Documents > Edit to assign documents.');};
+ $('renumber').onclick=()=>{if(!saveGroup(false))return;if(confirm('Change all group labels to 1, 2, 3, and so on? Group names, documents, and map buttons will be kept.')){project.groups.forEach((g,i)=>g.code=String(i+1));changed();render();message('Group labels changed to 1, 2, 3, and so on. You can also enter any unique label in the group editor.');}};
  $('delete-group').onclick=()=>{if(project.rows.some(r=>r.groupId===selected))return;project.groups=project.groups.filter(g=>g.id!==selected);selected=project.groups[0]?.id||null;changed();render();};
  $('remove-marker').onclick=()=>{const g=project.groups.find(g=>g.id===selected);if(g){g.x=g.y=null;changed();render();}};
  $('remove-group-image').onclick=()=>{const g=project.groups.find(g=>g.id===selected);if(g){g.image=null;changed();renderEditor();}};
  function place(e){const g=project.groups.find(g=>g.id===selected);if(!g||!project.map)return;const r=$('map-stage').getBoundingClientRect();g.x=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));g.y=Math.max(0,Math.min(1,(e.clientY-r.top)/r.height));changed();renderMarkers();renderGroups();$('remove-marker').disabled=false;}
- $('map-stage').onpointerdown=e=>{if(busy)return;const marker=e.target.closest('[data-marker]');if(marker){if(!saveGroup(false))return;selected=marker.dataset.marker;dragging=selected;renderGroups();renderEditor();renderMarkers();$('map-stage').setPointerCapture(e.pointerId);e.preventDefault();}};
- $('map-stage').onpointermove=e=>{if(dragging&&!busy)place(e);};$('map-stage').onpointerup=e=>{if(dragging){place(e);dragging=null;}};
- $('map-stage').onpointercancel=()=>{dragging=null;};$('map-stage').onclick=e=>{if(!busy&&!e.target.closest('[data-marker]'))place(e);};
+ function point(e){const r=$('map-stage').getBoundingClientRect();return {x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};}
+ $('map-stage').onpointerdown=e=>{
+  if(busy||!project.map||!selected||!saveGroup(false))return;
+  const marker=e.target.closest('[data-marker]'),hotspot=e.target.closest('[data-hotspot]'),p=point(e);
+  if(marker){selected=marker.dataset.marker;selectedHotspot=null;dragging={type:'marker'};}
+  else if(hotspot){selected=hotspot.dataset.hotgroup;selectedHotspot=hotspot.dataset.hotspot;const h=project.groups.find(g=>g.id===selected).hotspots.find(h=>h.id===selectedHotspot);dragging={type:e.target.closest('[data-resize]')?'resize':'move',start:p,original:{...h}};}
+  else if($('map-tool').value==='marker'){selectedHotspot=null;dragging={type:'marker'};place(e);}
+  else{const g=project.groups.find(g=>g.id===selected);if((g.hotspots||[]).length>=100){message('Use up to 100 transparent buttons per group.',true);return;}const h={id:'h'+Date.now()+'-'+Math.random().toString(36).slice(2),x:p.x,y:p.y,w:.0001,h:.0001};g.hotspots.push(h);selectedHotspot=h.id;dragging={type:'draw',start:p};}
+  renderGroups();renderEditor();renderMarkers();$('map-stage').setPointerCapture(e.pointerId);e.preventDefault();
+ };
+ function moveButton(e){if(!dragging||busy)return;if(dragging.type==='marker'){place(e);return;}const p=point(e),g=project.groups.find(g=>g.id===selected),h=g.hotspots.find(h=>h.id===selectedHotspot),a=dragging.start,o=dragging.original;
+  if(dragging.type==='draw'){h.x=Math.min(a.x,p.x);h.y=Math.min(a.y,p.y);h.w=Math.abs(a.x-p.x);h.h=Math.abs(a.y-p.y);}
+  else if(dragging.type==='move'){h.x=Math.max(0,Math.min(1-o.w,o.x+p.x-a.x));h.y=Math.max(0,Math.min(1-o.h,o.y+p.y-a.y));}
+  else{h.w=Math.max(.005,Math.min(1-h.x,o.w+p.x-a.x));h.h=Math.max(.005,Math.min(1-h.y,o.h+p.y-a.y));}
+  renderMarkers();
+ }
+ $('map-stage').onpointermove=moveButton;
+ function finishButton(e){if(!dragging)return;moveButton(e);if(dragging.type==='draw'){const g=project.groups.find(g=>g.id===selected);g.hotspots=g.hotspots.filter(h=>h.id!==selectedHotspot||h.w>=.005&&h.h>=.005);if(!g.hotspots.some(h=>h.id===selectedHotspot))selectedHotspot=null;}dragging=null;changed();renderMarkers();renderGroups();}
+ $('map-stage').onpointerup=finishButton;$('map-stage').onpointercancel=finishButton;
+ $('show-guides').onchange=renderMarkers;
+ $('delete-hotspot').onclick=()=>{for(const g of project.groups)g.hotspots=(g.hotspots||[]).filter(h=>h.id!==selectedHotspot);selectedHotspot=null;changed();renderMarkers();renderGroups();};
  for(const id of ['search','doc-filter'])$(id).addEventListener('input',renderDocuments);
  function sourceChoices(){const q=$('source-search').value.toLowerCase(),items=sources.filter(s=>s.path.toLowerCase().includes(q));$('source-select').innerHTML=items.slice(0,300).map(s=>`<option value="${escape(s.id)}">${escape(s.path)}</option>`).join('');const r=project.rows.find(r=>r.id===editing);if(r?.override)$('source-select').value=r.override;$('source-search-info').textContent=`${items.length} matching source files${items.length>300?' (first 300 shown; narrow your search)':''}.`;}
  $('document-rows').onclick=e=>{const b=e.target.closest('[data-edit]');if(!b||busy)return;const r=project.rows.find(r=>r.id===b.dataset.edit);editing=r.id;$('edit-filename').textContent=r.filename;$('edit-group').innerHTML=project.groups.map(g=>`<option value="${escape(g.id)}">${escape(g.code+' - '+g.name)}</option>`).join('');$('edit-group').value=r.groupId;$('edit-type').value=r.type;$('edit-status').value=r.status;$('edit-period').value=r.period;$('auto-source').checked=!r.override;$('manual-source').hidden=!r.override;$('source-search').value=r.filename;sourceChoices();$('document-error').textContent='';$('document-dialog').showModal();};
@@ -131,11 +153,12 @@
   if(busy||!saveGroup(false))return;
   if(!project.settings.title.trim()){message('Enter a title for the PDF.',true);return;}
   setBusy(true);
-  try{const snapshot=JSON.parse(JSON.stringify(project));const result=await NavigatorPDF.build(snapshot,[...sources],{excel:$('attach-excel').checked?excel:null},message);clearPreview();pdfBytes=result.bytes;pdfName=(project.example?'EXAMPLE - ':'')+safeName(project.settings.title)+(project.settings.mode==='index'?' - index-only draft':'')+'.pdf';pdfUrl=URL.createObjectURL(new Blob([pdfBytes],{type:'application/pdf'}));$('pdf-preview').src=pdfUrl;$('pdf-preview').hidden=false;$('preview-empty').hidden=true;$('download-pdf').disabled=false;$('preview-info').textContent=`${result.pages} pages · ${result.indexPages} index pages · ${result.documents} source PDFs included${project.example?' · Example data only':''}`;switchTab('preview');message('PDF created. Review the preview, then choose Download PDF.');}
+  try{const snapshot=JSON.parse(JSON.stringify(project));const result=await NavigatorPDF.build(snapshot,[...sources],{excel:$('attach-excel').checked?excel:null},message);clearPreview();pdfBytes=result.bytes;pdfLinkedFiles=result.links;pdfName=(project.example?'EXAMPLE - ':'')+safeName(project.settings.title)+(project.settings.mode==='index'?' - layout draft':' - Master Index')+'.pdf';pdfUrl=URL.createObjectURL(new Blob([pdfBytes],{type:'application/pdf'}));$('pdf-preview').src=pdfUrl;$('pdf-preview').hidden=false;$('preview-empty').hidden=true;$('preview-info').textContent=`${result.pages} index pages · ${result.documents} separate PDF files linked · No drawing pages embedded${project.example?' · Example data only':''}`;switchTab('preview');message('PDF created. Download the linked folder ZIP, extract it, and open the Master Index in your desktop PDF reader.');}
   catch(error){message(error.message,true);if(/not matched/.test(error.message))switchTab('documents');}
   finally{setBusy(false);}
  };
- $('download-pdf').onclick=()=>{if(pdfBytes)download(pdfBytes,pdfName,'application/pdf');};
+ $('download-pdf').onclick=()=>{if(pdfBytes&&!pdfStale){download(pdfBytes,pdfName,'application/pdf');message('Index downloaded. Keep it beside the Documents folder from the linked ZIP so file links can resolve.');}};
+ $('download-package').onclick=async()=>{if(!pdfBytes||pdfStale||busy)return;setBusy(true);try{const zip=new JSZip();zip.file(pdfName,pdfBytes);for(const target of pdfLinkedFiles)zip.file(target.path,target.source.file);zip.file('OPEN THIS FIRST.txt','Extract this entire ZIP. Open '+pdfName+' in your desktop PDF reader. Keep the Documents folder beside it. Drawing files stay separate and unchanged. Links request a new reader window; reader preferences may open a tab. Browser PDF previews may not follow local file links.');const bytes=await zip.generateAsync({type:'uint8array',compression:'STORE'},m=>message('Preparing linked folder: '+Math.round(m.percent)+'%'));download(bytes,safeName(project.settings.title)+' - Linked PDFs.zip','application/zip');message('Linked folder ZIP downloaded. Extract all files before opening the index.');}catch(error){message(error.message,true);}finally{setBusy(false);}};
  $('reset').onclick=()=>{if(project.rows.length&&!confirm('Start a new project? Save this project first if you want to keep it.'))return;project=blank();sources=[];excel=null;pendingWorkbook=null;pendingExcel=null;selected=null;dirty=false;clearPreview();settingsToUi();$('search').value='';$('doc-filter').value='all';render();switchTab('map');message('New project ready. Choose your Excel file to begin.');};
  $('demo').onclick=async()=>{
   if(project.rows.length&&!confirm('Replace this project with example data? Save your current project first to keep it.'))return;
