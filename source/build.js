@@ -1,0 +1,11 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path');
+const target=process.argv[2]||path.resolve(__dirname,'../PDF Navigator.html');
+let html=fs.readFileSync(path.join(__dirname,'index.html'),'utf8');
+const script=code=>'<script>\n'+code.replace(/<\/script/gi,'<\\/script')+'\n</script>';
+const libs=['pdf-lib.min.js','jszip.min.js'].map(name=>fs.readFileSync(path.join(__dirname,'vendor',name),'utf8'));
+html=html.replace('<!-- LIBRARIES -->',()=>libs.map(script).join('\n'));
+for(const name of ['core','pdf','demo','app'])html=html.replace('<!-- '+name.toUpperCase()+' -->',()=>script(fs.readFileSync(path.join(__dirname,name+'.js'),'utf8')));
+const readmeFile=fs.existsSync(path.join(__dirname,'README.txt'))?path.join(__dirname,'README.txt'):path.join(__dirname,'../README.txt');
+html=html.replace('</body>',()=>script('window.NavigatorReadme='+JSON.stringify(fs.readFileSync(readmeFile,'utf8'))+';')+'\n</body>');
+fs.writeFileSync(target,html);console.log('Built '+target+' ('+Buffer.byteLength(html).toLocaleString()+' bytes).');
